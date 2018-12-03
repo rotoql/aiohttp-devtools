@@ -2,6 +2,7 @@ import sys
 import traceback
 from pathlib import Path
 from textwrap import dedent
+import os
 
 import click
 
@@ -59,7 +60,7 @@ aux_port_help = 'Port to serve auxiliary app (reload and static) on, default por
 
 # defaults are all None here so default settings are defined in one place: DEV_DICT validation
 @cli.command()
-@click.argument('app-path', envvar='AIO_APP_PATH', type=_file_dir_existing, required=False)
+@click.argument('app-path', envvar='AIO_APP_PATH',required=False)
 @click.option('-s', '--static', 'static_path', envvar='AIO_STATIC_PATH', type=_dir_existing, help=static_help)
 @click.option('--root', 'root_path', envvar='AIO_ROOT', type=_dir_existing, help=root_help)
 @click.option('--static-url', envvar='AIO_STATIC_URL', help=static_url_help)
@@ -82,6 +83,8 @@ def runserver(**config):
     """
     active_config = {k: v for k, v in config.items() if v is not None}
     setup_logging(config['verbose'])
+    main_logger.warning(config)
+    main_logger.warning(os.getcwd())
     try:
         run_app(*_runserver(**active_config))
     except AiohttpDevException as e:
