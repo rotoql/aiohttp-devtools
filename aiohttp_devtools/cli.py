@@ -85,6 +85,7 @@ def runserver(**config):
     setup_logging(config['verbose'])
     main_logger.warning(config)
     main_logger.warning(os.getcwd())
+    main_logger.warning(os.listdir(os.getcwd()))
     try:
         run_app(*_runserver(**active_config))
     except AiohttpDevException as e:
