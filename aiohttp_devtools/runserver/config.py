@@ -4,7 +4,6 @@ import re
 import sys
 from importlib import import_module
 from pathlib import Path
-import os
 
 from aiohttp import web
 
@@ -82,8 +81,6 @@ class Config:
             logger.debug('app_path is a file, returning it directly')
             return path
 
-        logger.info("Path to app is {}".format(path))
-        logger.info("Files in currend dir {} {}".format(os.getcwd(), os.listdir(os.getcwd())))
         assert path.is_dir(), 'app_path {} is not a directory'.format(path)
         files = [x for x in path.iterdir() if x.is_file()]
         for std_file_name in STD_FILE_NAMES:
