@@ -21,6 +21,12 @@ class WatchTask:
         assert path
         self.stopper = asyncio.Event(loop=self._loop)
         self._awatch = awatch(path, stop_event=self.stopper)
+        commonql_path = os.path.normpath(
+            os.path.join(
+                path, os.pardir, os.pardir, "commonql", "commonql"
+            )
+        )
+        self._commonql_awatch = awatch(commonql_path, stop_event=self.stopper)
 
     async def start(self, app):
         self._app = app
@@ -33,9 +39,10 @@ class WatchTask:
         if self._task:
             self.stopper.set()
             async with self._awatch.lock:
-                if self._task.done():
-                    self._task.result()
-                self._task.cancel()
+                async with self._commonql_awatch.lock:
+                    if self._task.done():
+                        self._task.result()
+                    self._task.cancel()
 
 
 class AppTask(WatchTask):
@@ -51,20 +58,30 @@ class AppTask(WatchTask):
     async def _run(self):
         try:
             self._start_dev_server()
-
-            async for changes in self._awatch:
-                self._reloads += 1
-                if any(f.endswith('.py') for _, f in changes):
-                    logger.debug('%d changes, restarting server', len(changes))
-                    self._stop_dev_server()
-                    self._start_dev_server()
-                    await self._src_reload_when_live()
-                elif len(changes) > 1 or any(f.endswith(self.template_files) for _, f in changes):
-                    # reload all pages
-                    await src_reload(self._app)
+            running = True
+            while running:
+                try:
+                    service_next = self._awatch.__anext__()
+                    common_next = self._commonql_awatch.__anext__()
+                    done, pending = await asyncio.wait((service_next, common_next), return_when=asyncio.FIRST_COMPLETED)
+                    for pending_task in pending:
+                        pending_task.cancel()
+                    changes = done.pop().result()
+                except StopAsyncIteration:
+                    running = False
                 else:
-                    # a single (non template) file has changed, reload a single file.
-                    await src_reload(self._app, changes.pop()[1])
+                    self._reloads += 1
+                    if any(f.endswith('.py') for _, f in changes):
+                        logger.debug('%d changes, restarting server', len(changes))
+                        self._stop_dev_server()
+                        self._start_dev_server()
+                        await self._src_reload_when_live()
+                    elif len(changes) > 1 or any(f.endswith(self.template_files) for _, f in changes):
+                        # reload all pages
+                        await src_reload(self._app)
+                    else:
+                        # a single (non template) file has changed, reload a single file.
+                        await src_reload(self._app, changes.pop()[1])
         except Exception as exc:
             logger.exception(exc)
             await self._session.close()
@@ -124,8 +141,19 @@ class AppTask(WatchTask):
 
 class LiveReloadTask(WatchTask):
     async def _run(self):
-        async for changes in self._awatch:
-            if len(changes) > 1:
-                await src_reload(self._app)
+        running = True
+        while running:
+            try:
+                service_next = self._awatch.__anext__()
+                common_next = self._commonql_awatch.__anext__()
+                done, pending = await asyncio.wait((service_next, common_next), return_when=asyncio.FIRST_COMPLETED)
+                for pending_task in pending:
+                    pending_task.cancel()
+                changes = done.pop().result()
+            except StopAsyncIteration:
+                running = False
             else:
-                await src_reload(self._app, changes.pop()[1])
+                if len(changes) > 1:
+                    await src_reload(self._app)
+                else:
+                    await src_reload(self._app, (changes).pop()[1])
