@@ -28,35 +28,40 @@ INFER_HOST = '<inference>'
 
 class Config:
     def __init__(self, *,
-                 app_path: str='.',
-                 root_path: str=None,
-                 verbose: bool=False,
-                 static_path: str=None,
-                 python_path: str=None,
-                 static_url: str='/static/',
-                 livereload: bool=True,
-                 debug_toolbar: bool=False,  # TODO set True once debug toolbar is fixed
-                 app_factory_name: str=None,
-                 host: str=INFER_HOST,
-                 main_port: int=8000,
-                 aux_port: int=None):
+                 app_path: str = '.',
+                 root_path: str = None,
+                 verbose: bool = False,
+                 static_path: str = None,
+                 python_path: str = None,
+                 static_url: str = '/static/',
+                 livereload: bool = True,
+                 debug_toolbar: bool = False,  # TODO set True once debug toolbar is fixed
+                 app_factory_name: str = None,
+                 host: str = INFER_HOST,
+                 main_port: int = 8000,
+                 aux_port: int = None):
         if root_path:
             self.root_path = Path(root_path).resolve()
             logger.debug('Root path specified: %s', self.root_path)
         else:
-            logger.debug('Root path not specified, using current working directory')
+            logger.debug(
+                'Root path not specified, using current working directory')
             self.root_path = Path('.').resolve()
 
         self.app_path = self._find_app_path(app_path)
         if not self.app_path.name.endswith('.py'):
-            raise AdevConfigError('Unexpected extension for app_path: %s, should be .py' % self.app_path.name)
+            raise AdevConfigError(
+                'Unexpected extension for app_path: %s, should be .py' % self.app_path.name)
         self.verbose = verbose
         self.settings_found = False
 
-        self.py_file = self._resolve_path(str(self.app_path), 'is_file', 'app-path')
-        self.python_path = self._resolve_path(python_path, 'is_dir', 'python-path') or self.root_path
+        self.py_file = self._resolve_path(
+            str(self.app_path), 'is_file', 'app-path')
+        self.python_path = self._resolve_path(
+            python_path, 'is_dir', 'python-path') or self.root_path
 
-        self.static_path = self._resolve_path(static_path, 'is_dir', 'static-path')
+        self.static_path = self._resolve_path(
+            static_path, 'is_dir', 'static-path')
         self.static_url = static_url
         self.livereload = livereload
         self.debug_toolbar = debug_toolbar
@@ -85,11 +90,13 @@ class Config:
         files = [x for x in path.iterdir() if x.is_file()]
         for std_file_name in STD_FILE_NAMES:
             try:
-                file_path = next(f for f in files if std_file_name.fullmatch(f.name))
+                file_path = next(
+                    f for f in files if std_file_name.fullmatch(f.name))
             except StopIteration:
                 pass
             else:
-                logger.debug('app_path is a directory with a recognised file %s', file_path)
+                logger.debug(
+                    'app_path is a directory with a recognised file %s', file_path)
                 return file_path
         raise AdevConfigError('unable to find a recognised default file ("app.py" or "main.py") '
                               'in the directory "%s"' % app_path)
@@ -108,7 +115,8 @@ class Config:
         try:
             path = path.resolve()
         except OSError as e:
-            raise AdevConfigError(error_msg.format(arg_name=arg_name, path=_path, root=self.root_path)) from e
+            raise AdevConfigError(error_msg.format(
+                arg_name=arg_name, path=_path, root=self.root_path)) from e
 
         if check == 'is_file':
             if not path.is_file():
@@ -135,11 +143,13 @@ class Config:
             raise AdevConfigError('error importing "{}" '
                                   'from "{}": {}'.format(module_path, self.python_path, e)) from e
 
-        logger.debug('successfully loaded "%s" from "%s"', module_path, self.python_path)
+        logger.debug('successfully loaded "%s" from "%s"',
+                     module_path, self.python_path)
 
         if self.app_factory_name is None:
             try:
-                self.app_factory_name = next(an for an in APP_FACTORY_NAMES if hasattr(module, an))
+                self.app_factory_name = next(
+                    an for an in APP_FACTORY_NAMES if hasattr(module, an))
             except StopIteration as e:
                 raise AdevConfigError('No name supplied and no default app factory '
                                       'found in {s.py_file.name}'.format(s=self)) from e
@@ -165,19 +175,25 @@ class Config:
             signature = inspect.signature(app_factory)
             if 'loop' in signature.parameters:
                 loop = asyncio.get_event_loop()
-                app = app_factory(loop=loop)
+                apps = app_factory(loop=loop)
             else:
                 # loop argument missing, assume no arguments
-                app = app_factory()
+                apps = app_factory()
+            if not isinstance(apps, list):
+                apps = [apps]
+            for app_tuple in apps:
+                try:
+                    app, port = app_tuple
+                except (ValueError, TypeError):
+                    app = app_tuple
+                if asyncio.iscoroutine(app):
+                    app = await app
 
-            if asyncio.iscoroutine(app):
-                app = await app
+                if not isinstance(app, web.Application):
+                    raise AdevConfigError('app factory "{.app_factory_name}" returned "{.__class__.__name__}" not an '
+                                          'aiohttp.web.Application'.format(self, app))
 
-            if not isinstance(app, web.Application):
-                raise AdevConfigError('app factory "{.app_factory_name}" returned "{.__class__.__name__}" not an '
-                                      'aiohttp.web.Application'.format(self, app))
-
-        return app
+        return apps
 
     def __str__(self):
         fields = ('py_file', 'static_path', 'static_url', 'livereload', 'debug_toolbar',

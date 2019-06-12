@@ -27,7 +27,7 @@ JINJA_ENV = 'aiohttp_jinja2_environment'
 HOST = '0.0.0.0'
 
 
-def modify_main_app(app, config: Config):
+def modify_main_app(app, port, config: Config):
     """
     Modify the app we're serving to make development easier, eg.
     * modify responses to add the livereload snippet
@@ -48,7 +48,7 @@ def modify_main_app(app, config: Config):
             if (not request.path.startswith('/_debugtoolbar') and
                     'text/html' in response.content_type and
                     getattr(response, 'body', False)):
-                lr_snippet = LIVE_RELOAD_HOST_SNIPPET.format(get_host(request), config.aux_port)
+                lr_snippet = LIVE_RELOAD_HOST_SNIPPET.format(get_host(request), port+1)
                 dft_logger.debug('appending live reload snippet "%s" to body', lr_snippet)
                 response.body += lr_snippet.encode()
         app.on_response_prepare.append(on_prepare)
@@ -58,7 +58,7 @@ def modify_main_app(app, config: Config):
         # we set the app key even in middleware to make the switch to production easier and for backwards compat.
         @web.middleware
         async def static_middleware(request, handler):
-            static_url = 'http://{}:{}/{}'.format(get_host(request), config.aux_port, static_path)
+            static_url = 'http://{}:{}/{}'.format(get_host(request), port+1, static_path)
             dft_logger.debug('settings app static_root_url to "%s"', static_url)
             request.app['static_root_url'] = static_url
             return await handler(request)
@@ -110,27 +110,41 @@ def serve_main_app(config: Config, tty_path: Optional[str]):
     with set_tty(tty_path):
         setup_logging(config.verbose)
         loop = asyncio.get_event_loop()
-        runner = loop.run_until_complete(start_main_app(config, loop))
+        runners = loop.run_until_complete(start_main_app(config, loop))
         try:
             loop.run_forever()
         except KeyboardInterrupt:  # pragma: no cover
             pass
         finally:
             with contextlib.suppress(asyncio.TimeoutError, KeyboardInterrupt):
-                loop.run_until_complete(runner.cleanup())
+                for runner in runners:
+                    loop.run_until_complete(runner.cleanup())
 
 
 async def start_main_app(config: Config, loop):
-    app = await config.load_app()
+    apps = await config.load_app()
 
-    modify_main_app(app, config)
+    runners = []
+    try:
+        main_app, main_port = apps[0]
+    except (ValueError, TypeError):
+        main_app = apps[0]
+        main_port = 8000
 
-    await check_port_open(config.main_port, loop)
-    runner = web.AppRunner(app, access_log_format='%r %s %b')
-    await runner.setup()
-    site = web.TCPSite(runner, host=HOST, port=config.main_port, shutdown_timeout=0.1)
-    await site.start()
-    return runner
+    modify_main_app(main_app, main_port, config)
+    for app_tuple in apps:
+        try:
+            app, port = app_tuple
+        except (ValueError, TypeError):
+            app = app_tuple
+            port = 8000
+        await check_port_open(port, loop)
+        runner = web.AppRunner(app, access_log_format='%r %s %b')
+        await runner.setup()
+        site = web.TCPSite(runner, host=HOST, port=port, shutdown_timeout=0.1)
+        await site.start()
+        runners.append(runner)
+    return runners
 
 
 WS = 'websockets'
